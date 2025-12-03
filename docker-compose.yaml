@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  indexer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pulsechain-token-indexer
+    ports:
+      - "8000:8000"
+    environment:
+      - RPC_URL=https://rpc.pulsechain.com
+      - TOKEN_ADDRESS=0x7b39712Ef45F7dcED2bBDF11F3D5046bA61dA719
+      - START_BLOCK=20326117
+      - DATABASE_PATH=/data/indexer.db
+      - BATCH_SIZE=10000
+    volumes:
+      - indexer_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5).raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  indexer_data:
+    driver: local

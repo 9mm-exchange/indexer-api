@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: token-indexer-config
+  labels:
+    app: token-indexer
+data:
+  RPC_URL: "https://rpc.pulsechain.com"
+  TOKEN_ADDRESS: "0x7b39712Ef45F7dcED2bBDF11F3D5046bA61dA719"
+  START_BLOCK: "20326117"
+  DATABASE_PATH: "/data/indexer.db"
+  BATCH_SIZE: "10000"

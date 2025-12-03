@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+*.env
+
+# Data
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Kubernetes
+k8s/
+
+# Docs
+*.md
+!README.md
+
+# Docker
+docker-compose*.yaml
+Dockerfile*
+
+# Misc
+.DS_Store
+*.log
+
