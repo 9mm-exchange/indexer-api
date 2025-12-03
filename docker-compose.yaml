@@ -5,15 +5,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: pulsechain-token-indexer
+    container_name: multi-chain-token-indexer
     ports:
       - "8000:8000"
     environment:
-      - RPC_URL=https://rpc.pulsechain.com
-      - TOKEN_ADDRESS=0x7b39712Ef45F7dcED2bBDF11F3D5046bA61dA719
-      - START_BLOCK=20326117
-      - DATABASE_PATH=/data/indexer.db
-      - BATCH_SIZE=10000
+      # Multi-chain configuration as JSON string
+      # Format: [{"chain_id": 1, "chain_name": "Ethereum", "rpc_url": "...", "token_address": "...", "start_block": 0}]
+      CHAINS_CONFIG: '[{"chain_id": 369, "chain_name": "PulseChain", "rpc_url": "https://rpc.pulsechain.com", "token_address": "0x7b39712Ef45F7dcED2bBDF11F3D5046bA61dA719", "start_block": 20326117}, {"chain_id": 8453, "chain_name": "Base", "rpc_url": "https://mainnet.base.org", "token_address": "0xe290816384416fb1dB9225e176b716346dB9f9fE", "start_block": 26153389}, {"chain_id": 146, "chain_name": "Sonic", "rpc_url": "https://rpc.soniclabs.com", "token_address": "0xC5cB0B67D24d72b9D86059344c88Fb3cE93BF37C", "start_block": 12688075}, {"chain_id": 1, "chain_name": "Ethereum", "rpc_url": "https://eth.llamarpc.com", "token_address": "0x824b556259C69d7F2F12F3b21811Cfb00CE126aF", "start_block": 23110594}]'
+      DATABASE_PATH: /data/indexer.db
+      BATCH_SIZE: "10000"
     volumes:
       - indexer_data:/data
     restart: unless-stopped

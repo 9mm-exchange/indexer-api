@@ -9,7 +9,8 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 1Gi
+      # Increase storage size for multi-chain indexing (1Gi per chain recommended)
+      storage: 5Gi
   # Uncomment and modify if you need a specific storage class
   # storageClassName: standard
 

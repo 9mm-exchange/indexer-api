@@ -28,9 +28,8 @@ spec:
         fsGroup: 1000
       containers:
         - name: indexer
-          # Use ttl.sh for temporary images (24h expiry) or replace with your registry
-          # Current: ttl.sh/pulsechain-indexer-1764758754:24h
-          image: ttl.sh/pulsechain-indexer-1764758754:24h
+          # Docker Hub image - update tag after pushing new build
+          image: spiritmonkey/indexer-api:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -42,12 +41,15 @@ spec:
             - name: data
               mountPath: /data
           resources:
+            # Adjust resources based on number of chains being indexed
+            # For single chain: 512Mi memory, 200m CPU
+            # For multiple chains: increase memory (512Mi per chain recommended)
             requests:
               memory: "512Mi"
               cpu: "200m"
             limits:
-              memory: "2Gi"
-              cpu: "1000m"
+              memory: "4Gi"  # Increased for multi-chain support
+              cpu: "2000m"   # Increased for concurrent chain indexing
           livenessProbe:
             httpGet:
               path: /health

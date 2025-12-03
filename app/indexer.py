@@ -2,12 +2,12 @@
 
 import asyncio
 import logging
+import traceback
 from typing import List, Tuple, Dict
 from web3 import Web3
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import requests
 
-from app.config import get_settings
+from app.config import get_settings, ChainConfig
 from app.database import db
 
 # Configure logging
@@ -32,33 +32,49 @@ ERC20_TRANSFER_ABI = [
 ]
 
 
-class TokenIndexer:
-    """Indexes Transfer events for an ERC20 token."""
+class ChainIndexer:
+    """Indexes Transfer events for an ERC20 token on a specific chain."""
     
-    def __init__(self):
-        self.settings = get_settings()
-        self.w3 = Web3(Web3.HTTPProvider(self.settings.rpc_url, request_kwargs={'timeout': 60}))
-        self.token_address = Web3.to_checksum_address(self.settings.token_address)
+    # Default batch sizes per chain (some RPCs have lower limits)
+    DEFAULT_BATCH_SIZES = {
+        1: 1000,      # Ethereum - strict 1k limit on public RPCs
+        369: 2000,    # PulseChain - can timeout with large batches
+        8453: 10000,  # Base - handles larger batches well
+        146: 10000,   # Sonic - handles larger batches well
+    }
+    
+    def __init__(self, chain_config: ChainConfig):
+        self.chain_config = chain_config
+        self.chain_id = chain_config.chain_id
+        self.w3 = Web3(Web3.HTTPProvider(chain_config.rpc_url, request_kwargs={'timeout': 60}))
+        self.token_address = Web3.to_checksum_address(chain_config.token_address)
         self.contract = self.w3.eth.contract(
             address=self.token_address,
             abi=ERC20_TRANSFER_ABI
         )
         self._stop_requested = False
         self._initial_sync_done = False
+        # Adaptive batch size - starts with chain-specific default or global setting
+        settings = get_settings()
+        self._batch_size = self.DEFAULT_BATCH_SIZES.get(chain_config.chain_id, settings.batch_size)
+        self._min_batch_size = 100  # Don't go below this
     
     def stop(self):
         """Request the indexer to stop."""
         self._stop_requested = True
     
-    @retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        retry=retry_if_exception_type((requests.exceptions.RequestException, Exception)),
-        before_sleep=lambda retry_state: logger.warning(f"Retrying after error, attempt {retry_state.attempt_number}")
-    )
     async def get_current_block(self) -> int:
         """Get the current block number from the chain with retry."""
-        return self.w3.eth.block_number
+        for attempt in range(5):
+            try:
+                return self.w3.eth.block_number
+            except Exception as e:
+                if attempt < 4:
+                    wait_time = min(30, 2 ** attempt)
+                    logger.warning(f"[Chain {self.chain_id}] Retrying get_current_block after error, attempt {attempt + 1}: {e}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise
     
     async def batch_check_eoa(self, addresses: List[str]) -> Dict[str, bool]:
         """
@@ -86,7 +102,7 @@ class TokenIndexer:
         try:
             # Send batch request
             response = requests.post(
-                self.settings.rpc_url,
+                self.chain_config.rpc_url,
                 json=batch_requests,
                 headers={"Content-Type": "application/json"},
                 timeout=60
@@ -110,7 +126,7 @@ class TokenIndexer:
             return eoa_map
             
         except Exception as e:
-            logger.error(f"Batch EOA check failed: {e}")
+            logger.error(f"[Chain {self.chain_id}] Batch EOA check failed: {e}")
             # Fall back to individual checks
             return await self._fallback_check_eoa(addresses)
     
@@ -128,12 +144,12 @@ class TokenIndexer:
     
     async def check_and_cache_address_types(self):
         """Check uncached addresses and determine if they're EOAs using batch requests."""
-        unchecked = await db.get_unchecked_addresses()
+        unchecked = await db.get_unchecked_addresses(self.chain_id)
         
         if not unchecked:
             return
         
-        logger.info(f"Checking {len(unchecked)} addresses for EOA status...")
+        logger.info(f"[Chain {self.chain_id}] Checking {len(unchecked)} addresses for EOA status...")
         
         batch_size = 100  # Batch size for RPC requests
         checked_count = 0
@@ -150,25 +166,19 @@ class TokenIndexer:
             
             # Save to database
             results = [(addr, is_eoa) for addr, is_eoa in eoa_results.items()]
-            await db.batch_set_address_types(results)
+            await db.batch_set_address_types(self.chain_id, results)
             
             checked_count += len(results)
             eoa_count = sum(1 for is_eoa in eoa_results.values() if is_eoa)
             eoa_total += eoa_count
             
-            logger.info(f"Checked {checked_count}/{len(unchecked)} addresses. Batch: {eoa_count}/{len(batch)} EOAs")
+            logger.info(f"[Chain {self.chain_id}] Checked {checked_count}/{len(unchecked)} addresses. Batch: {eoa_count}/{len(batch)} EOAs")
             
             # Small delay between batches
             await asyncio.sleep(0.1)
         
-        logger.info(f"Finished checking address types. EOAs found: {eoa_total}/{checked_count}")
+        logger.info(f"[Chain {self.chain_id}] Finished checking address types. EOAs found: {eoa_total}/{checked_count}")
     
-    @retry(
-        stop=stop_after_attempt(5),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        retry=retry_if_exception_type((requests.exceptions.RequestException, Exception)),
-        before_sleep=lambda retry_state: logger.warning(f"Retrying fetch_transfer_events, attempt {retry_state.attempt_number}")
-    )
     async def fetch_transfer_events(
         self, 
         from_block: int, 
@@ -180,87 +190,129 @@ class TokenIndexer:
         Returns:
             List of tuples (block_number, tx_hash, log_index, from_addr, to_addr, value)
         """
-        # Create event filter
-        event_filter = {
-            "fromBlock": from_block,
-            "toBlock": to_block,
-            "address": self.token_address,
-            "topics": [TRANSFER_EVENT_SIGNATURE]
-        }
-        
-        # Fetch logs
-        logs = self.w3.eth.get_logs(event_filter)
-        
-        transfers = []
-        for log in logs:
+        for attempt in range(5):
             try:
-                # Topics: [event_sig, from_address, to_address]
-                from_addr = Web3.to_checksum_address("0x" + log["topics"][1].hex()[-40:])
-                to_addr = Web3.to_checksum_address("0x" + log["topics"][2].hex()[-40:])
+                # Create event filter
+                event_filter = {
+                    "fromBlock": from_block,
+                    "toBlock": to_block,
+                    "address": self.token_address,
+                    "topics": [TRANSFER_EVENT_SIGNATURE]
+                }
                 
-                # Data contains the value
-                value = int(log["data"].hex(), 16)
+                # Fetch logs
+                logs = self.w3.eth.get_logs(event_filter)
                 
-                transfers.append((
-                    log["blockNumber"],
-                    log["transactionHash"].hex(),
-                    log["logIndex"],
-                    from_addr,
-                    to_addr,
-                    str(value)
-                ))
+                transfers = []
+                for log in logs:
+                    try:
+                        # Topics: [event_sig, from_address, to_address]
+                        from_addr = Web3.to_checksum_address("0x" + log["topics"][1].hex()[-40:])
+                        to_addr = Web3.to_checksum_address("0x" + log["topics"][2].hex()[-40:])
+                        
+                        # Data contains the value
+                        value = int(log["data"].hex(), 16)
+                        
+                        transfers.append((
+                            log["blockNumber"],
+                            log["transactionHash"].hex(),
+                            log["logIndex"],
+                            from_addr,
+                            to_addr,
+                            str(value)
+                        ))
+                    except Exception as e:
+                        logger.warning(f"[Chain {self.chain_id}] Failed to decode log: {e}")
+                        continue
+                
+                return transfers
             except Exception as e:
-                logger.warning(f"Failed to decode log: {e}")
-                continue
+                error_str = str(e).lower()
+                # Check if error is due to block range being too large
+                if "range" in error_str or "too large" in error_str or "timeout" in error_str or "exceeded" in error_str:
+                    # Reduce batch size for future requests
+                    old_batch = self._batch_size
+                    self._batch_size = max(self._min_batch_size, self._batch_size // 2)
+                    if self._batch_size != old_batch:
+                        logger.warning(f"[Chain {self.chain_id}] Reducing batch size from {old_batch} to {self._batch_size} due to RPC limits")
+                    # Return empty to trigger retry with smaller batch in index_blocks
+                    raise
+                
+                if attempt < 4:
+                    wait_time = min(30, 2 ** attempt)
+                    logger.warning(f"[Chain {self.chain_id}] Retrying fetch_transfer_events, attempt {attempt + 1}: {e}")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise
         
-        return transfers
+        return []
     
     async def index_blocks(self, start_block: int, end_block: int):
         """
         Index transfer events for a range of blocks.
+        Uses adaptive batch sizing - automatically reduces batch size if RPC rejects.
         
         Args:
             start_block: Starting block number
             end_block: Ending block number
         """
-        batch_size = self.settings.batch_size
         current_block = start_block
         total_transfers = 0
+        consecutive_errors = 0
         
-        logger.info(f"Indexing blocks {start_block} to {end_block}")
+        logger.info(f"[Chain {self.chain_id}] Indexing blocks {start_block} to {end_block} (batch size: {self._batch_size})")
         
         while current_block <= end_block and not self._stop_requested:
-            batch_end = min(current_block + batch_size - 1, end_block)
+            # Use adaptive batch size
+            batch_end = min(current_block + self._batch_size - 1, end_block)
             
             try:
                 # Fetch transfers for this batch
                 transfers = await self.fetch_transfer_events(current_block, batch_end)
                 
                 if transfers:
-                    await db.insert_transfers(transfers)
+                    await db.insert_transfers(self.chain_id, transfers)
                     # Update balances incrementally
-                    await db.update_balances_from_transfers(transfers)
+                    await db.update_balances_from_transfers(self.chain_id, transfers)
                     total_transfers += len(transfers)
                 
                 # Update progress
-                await db.update_last_indexed_block(batch_end)
+                await db.update_last_indexed_block(self.chain_id, batch_end)
                 
                 progress = ((batch_end - start_block) / (end_block - start_block)) * 100 if end_block > start_block else 100
                 logger.info(
-                    f"Blocks {current_block}-{batch_end} | "
+                    f"[Chain {self.chain_id}] Blocks {current_block}-{batch_end} | "
                     f"Transfers: {len(transfers)} | "
                     f"Total: {total_transfers} | "
-                    f"Progress: {progress:.1f}%"
+                    f"Progress: {progress:.1f}% | "
+                    f"Batch: {self._batch_size}"
                 )
                 
                 current_block = batch_end + 1
+                consecutive_errors = 0
                 
                 # Small delay to avoid overwhelming the RPC
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.05)
                 
             except Exception as e:
-                logger.error(f"Error indexing batch {current_block}-{batch_end}: {e}")
-                # Wait before retrying (tenacity handles retries for fetch)
+                consecutive_errors += 1
+                error_str = str(e).lower()
+                
+                # If batch size related error, the batch size was already reduced in fetch_transfer_events
+                # Just retry with the new smaller batch
+                if "range" in error_str or "too large" in error_str or "timeout" in error_str or "exceeded" in error_str:
+                    logger.warning(f"[Chain {self.chain_id}] Retrying with smaller batch size: {self._batch_size}")
+                    await asyncio.sleep(1)
+                    continue
+                
+                logger.error(f"[Chain {self.chain_id}] Error indexing batch {current_block}-{batch_end}: {e}")
+                logger.error(f"[Chain {self.chain_id}] Full traceback:\n{traceback.format_exc()}")
+                
+                # If too many consecutive errors, reduce batch size anyway
+                if consecutive_errors >= 3 and self._batch_size > self._min_batch_size:
+                    self._batch_size = max(self._min_batch_size, self._batch_size // 2)
+                    logger.warning(f"[Chain {self.chain_id}] Reducing batch size to {self._batch_size} after {consecutive_errors} errors")
+                
                 await asyncio.sleep(5)
                 continue
         
@@ -270,37 +322,37 @@ class TokenIndexer:
         """
         Main sync loop - indexes from start block and continuously syncs new blocks.
         """
-        await db.set_syncing(True)
+        await db.set_syncing(self.chain_id, True)
         self._stop_requested = False
         
         try:
             # Get last indexed block
-            last_indexed = await db.get_last_indexed_block()
-            start_block = self.settings.start_block
+            last_indexed = await db.get_last_indexed_block(self.chain_id)
+            start_block = self.chain_config.start_block
             
             # If we haven't started yet, start from the configured start block
             if last_indexed < start_block:
                 last_indexed = start_block - 1
-                await db.update_last_indexed_block(last_indexed)
-                logger.info(f"Set initial start block to {start_block}")
+                await db.update_last_indexed_block(self.chain_id, last_indexed)
+                logger.info(f"[Chain {self.chain_id}] Set initial start block to {start_block}")
             
-            logger.info(f"Last indexed block: {last_indexed}")
+            logger.info(f"[Chain {self.chain_id}] Last indexed block: {last_indexed}")
             
             # Check if this is initial sync (no balances yet)
-            holder_count = await db.get_holder_count(eoa_only=False)
+            holder_count = await db.get_holder_count(self.chain_id, eoa_only=False)
             if holder_count == 0 and last_indexed >= start_block:
-                logger.info("Rebuilding balances table from existing transfers...")
-                await db.rebuild_all_balances()
-                logger.info("Balances rebuilt successfully")
+                logger.info(f"[Chain {self.chain_id}] Rebuilding balances table from existing transfers...")
+                await db.rebuild_all_balances(self.chain_id)
+                logger.info(f"[Chain {self.chain_id}] Balances rebuilt successfully")
             
             # Continuous sync loop
             while not self._stop_requested:
                 current_chain_block = await self.get_current_block()
-                last_indexed = await db.get_last_indexed_block()
+                last_indexed = await db.get_last_indexed_block(self.chain_id)
                 
                 if current_chain_block > last_indexed:
                     blocks_behind = current_chain_block - last_indexed
-                    logger.info(f"Chain head: {current_chain_block}, Last indexed: {last_indexed}, Behind: {blocks_behind} blocks")
+                    logger.info(f"[Chain {self.chain_id}] Chain head: {current_chain_block}, Last indexed: {last_indexed}, Behind: {blocks_behind} blocks")
                     
                     await self.index_blocks(last_indexed + 1, current_chain_block)
                     
@@ -309,19 +361,78 @@ class TokenIndexer:
                     
                     if not self._initial_sync_done:
                         self._initial_sync_done = True
-                        logger.info("Initial sync complete!")
+                        logger.info(f"[Chain {self.chain_id}] Initial sync complete!")
                 else:
-                    logger.debug("Up to date, waiting for new blocks...")
+                    logger.debug(f"[Chain {self.chain_id}] Up to date, waiting for new blocks...")
                 
-                # Wait before checking for new blocks (PulseChain ~10s block time)
+                # Wait before checking for new blocks (adjust per chain if needed)
                 await asyncio.sleep(12)
                 
         except Exception as e:
-            logger.error(f"Sync error: {e}")
+            logger.error(f"[Chain {self.chain_id}] Sync error: {e}")
             raise
         finally:
-            await db.set_syncing(False)
+            await db.set_syncing(self.chain_id, False)
 
 
-# Global indexer instance
-indexer = TokenIndexer()
+class MultiChainIndexer:
+    """Manages multiple chain indexers."""
+    
+    def __init__(self):
+        self.settings = get_settings()
+        self.indexers: Dict[int, ChainIndexer] = {}
+        self._stop_requested = False
+    
+    async def initialize(self):
+        """Initialize all chain indexers from configuration."""
+        chains = self.settings.get_chains()
+        
+        logger.info(f"Initializing {len(chains)} chain indexers...")
+        
+        for chain_config in chains:
+            # Register chain in database
+            await db.register_chain(
+                chain_id=chain_config.chain_id,
+                chain_name=chain_config.chain_name,
+                rpc_url=chain_config.rpc_url,
+                token_address=chain_config.token_address,
+                start_block=chain_config.start_block
+            )
+            
+            # Create indexer for this chain
+            indexer = ChainIndexer(chain_config)
+            self.indexers[chain_config.chain_id] = indexer
+            
+            logger.info(
+                f"Registered chain: {chain_config.chain_name} (ID: {chain_config.chain_id}) "
+                f"Token: {chain_config.token_address} Start: {chain_config.start_block}"
+            )
+    
+    def stop(self):
+        """Stop all indexers."""
+        self._stop_requested = True
+        for indexer in self.indexers.values():
+            indexer.stop()
+    
+    async def sync_all(self):
+        """Start syncing all chains concurrently."""
+        tasks = []
+        for chain_id, indexer in self.indexers.items():
+            task = asyncio.create_task(indexer.sync())
+            tasks.append(task)
+            logger.info(f"Started sync task for chain {chain_id}")
+        
+        # Wait for all tasks (they run indefinitely until stopped)
+        await asyncio.gather(*tasks, return_exceptions=True)
+    
+    def get_indexer(self, chain_id: int) -> ChainIndexer:
+        """Get indexer for a specific chain."""
+        return self.indexers.get(chain_id)
+    
+    def get_all_chain_ids(self) -> List[int]:
+        """Get all registered chain IDs."""
+        return list(self.indexers.keys())
+
+
+# Global multi-chain indexer instance
+multi_indexer = MultiChainIndexer()
