@@ -434,7 +434,7 @@ class Database:
                     (chain_id,)
                 )
             else:
-            cursor = await conn.execute("SELECT COUNT(*) as count FROM transfers")
+                cursor = await conn.execute("SELECT COUNT(*) as count FROM transfers")
             row = await cursor.fetchone()
             return row["count"] if row else 0
     

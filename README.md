@@ -106,6 +106,15 @@ docker run -p 8000:8000 -v indexer_data:/data \
 
 ## Configuration
 
+### RPC Providers
+
+For reliable indexing, we recommend using **Alchemy** (free tier available):
+- Sign up at https://alchemy.com
+- Create apps for Ethereum, Base, and Sonic
+- Use your API key in the RPC URLs
+
+**Why Alchemy?** Public RPCs often truncate `eth_getLogs` results, causing missed transfers.
+
 ### Multi-Chain Configuration
 
 The indexer supports multiple configuration methods:
