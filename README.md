@@ -39,13 +39,18 @@ The indexer supports any EVM-compatible chain. Currently indexing 9MM token on:
 | `GET /health` | Health check (for K8s probes) |
 | `GET /metrics` | Prometheus metrics |
 
-**Example:**
+**Live API:** `http://45.79.242.97`
+
+**Examples:**
 ```bash
 # Get PulseChain holders
-curl http://localhost:8000/holders?chain_id=369
+curl http://45.79.242.97/holders?chain_id=369
 
 # Check sync progress
-curl http://localhost:8000/status
+curl http://45.79.242.97/status
+
+# Get all chains
+curl http://45.79.242.97/chains
 ```
 
 ## Quick Start
