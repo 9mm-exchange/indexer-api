@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: balance-checker
+  namespace: ninemm-frontend
+spec:
+  selector:
+    app: balance-checker
+  ports:
+    - port: 80
+      targetPort: 80
+

@@ -256,7 +256,8 @@ async def health_check():
 @app.get("/holders", response_model=HoldersResponse)
 async def get_holders(
     chain_id: int = Query(..., description="Chain ID to query"),
-    include_contracts: bool = Query(False, description="Include contract addresses")
+    include_contracts: bool = Query(False, description="Include contract addresses"),
+    min_balance: Optional[float] = Query(None, description="Minimum token balance filter (in tokens, not wei). Example: 1 = holders with ≥1 token")
 ):
     """
     Get all token holders with their balances for a specific chain.
@@ -266,6 +267,7 @@ async def get_holders(
     Query Parameters:
         - chain_id: Chain ID to query (required)
         - include_contracts: If true, include contract addresses (default: false, EOA only)
+        - min_balance: Minimum token balance in tokens (default: 0). Example: min_balance=1 returns holders with ≥1 9MM
     
     Excludes (by default):
     - Zero address
@@ -281,7 +283,7 @@ async def get_holders(
         - holders: List of all holders with their balances (in wei as string)
     """
     # Check cache first (different cache keys for different filters)
-    cache_key = f"holders_response_{chain_id}_{'all' if include_contracts else 'eoa'}"
+    cache_key = f"holders_response_{chain_id}_{'all' if include_contracts else 'eoa'}_{min_balance or 0}"
     if cache_key in response_cache:
         return response_cache[cache_key]
     
@@ -296,9 +298,14 @@ async def get_holders(
         last_block = await db.get_last_indexed_block(chain_id)
         is_syncing = await db.is_syncing(chain_id)
         
+        # Convert min_balance from tokens to wei (18 decimals)
+        min_balance_wei = int((min_balance or 0) * (10 ** 18))
+        
+        # Filter holders by minimum balance
         holders = [
             Holder(address=addr, balance=balance)
             for addr, balance in holders_data
+            if int(balance) >= min_balance_wei
         ]
         
         response = HoldersResponse(

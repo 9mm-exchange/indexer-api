@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>9MM BALANCE CHECKER</title>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Anton&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Space Mono', monospace;
+            background: #f5f5f5;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        
+        .logo {
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        
+        .logo-9 {
+            font-family: 'Anton', sans-serif;
+            font-size: 5rem;
+            color: #000;
+            display: inline-block;
+            line-height: 1;
+            text-shadow: 6px 6px 0 #ff3333;
+            letter-spacing: 5px;
+        }
+        
+        h1 {
+            font-family: 'Anton', sans-serif;
+            text-align: center;
+            font-size: 2rem;
+            color: #000;
+            margin-bottom: 5px;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 0.75rem;
+            margin-bottom: 30px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        
+        .input-card {
+            background: #fff;
+            border: 4px solid #000;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        input {
+            flex: 1;
+            padding: 15px;
+            border: 3px solid #000;
+            background: #fff;
+            color: #000;
+            font-size: 12px;
+            font-family: 'Space Mono', monospace;
+            outline: none;
+        }
+        
+        input:focus {
+            background: #ff3333;
+            color: #fff;
+        }
+        
+        input::placeholder {
+            color: #999;
+        }
+        
+        button {
+            padding: 15px 30px;
+            background: #000;
+            border: 3px solid #000;
+            color: #fff;
+            font-size: 16px;
+            font-family: 'Anton', sans-serif;
+            letter-spacing: 2px;
+            cursor: pointer;
+            transition: all 0.1s;
+            text-transform: uppercase;
+        }
+        
+        button:hover {
+            background: #ff3333;
+            border-color: #ff3333;
+        }
+        
+        button:active {
+            transform: translate(3px, 3px);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .results {
+            display: none;
+        }
+        
+        .results.show {
+            display: block;
+        }
+        
+        .chain-card {
+            background: #fff;
+            border: 4px solid #000;
+            padding: 20px;
+            margin-bottom: 12px;
+            position: relative;
+            transition: all 0.1s;
+        }
+        
+        .chain-card::before {
+            content: '';
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            right: -6px;
+            bottom: -6px;
+            background: #000;
+            z-index: -1;
+        }
+        
+        .chain-card:hover {
+            transform: translate(-3px, -3px);
+        }
+        
+        .chain-card:hover::before {
+            top: 9px;
+            left: 9px;
+        }
+        
+        .chain-card.has-balance {
+            border-color: #ff3333;
+        }
+        
+        .chain-card.has-balance::before {
+            background: #ff3333;
+        }
+        
+        .chain-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #000;
+            padding-bottom: 10px;
+        }
+        
+        .chain-name {
+            font-family: 'Anton', sans-serif;
+            font-size: 1.3rem;
+            color: #000;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        
+        .chain-id {
+            font-size: 0.7rem;
+            color: #666;
+            letter-spacing: 1px;
+        }
+        
+        .balance {
+            font-family: 'Anton', sans-serif;
+            font-size: 2rem;
+            color: #000;
+        }
+        
+        .balance.zero {
+            color: #ccc;
+        }
+        
+        .balance-label {
+            font-size: 0.8rem;
+            color: #666;
+            letter-spacing: 1px;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            border: 4px solid #000;
+            background: #fff;
+        }
+        
+        .loading-text {
+            font-family: 'Anton', sans-serif;
+            font-size: 1.5rem;
+            letter-spacing: 3px;
+            animation: blink 0.5s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        
+        .error {
+            background: #ff3333;
+            border: 4px solid #000;
+            padding: 20px;
+            color: #fff;
+            text-align: center;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .total-section {
+            background: #000;
+            border: 4px solid #000;
+            padding: 30px;
+            margin-top: 20px;
+            text-align: center;
+            position: relative;
+        }
+        
+        .total-section::before {
+            content: '';
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            right: -8px;
+            bottom: -8px;
+            background: #ff3333;
+            z-index: -1;
+        }
+        
+        .total-label {
+            color: #fff;
+            font-size: 0.8rem;
+            letter-spacing: 3px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+        
+        .total-balance {
+            font-family: 'Anton', sans-serif;
+            font-size: 3rem;
+            color: #ff3333;
+            letter-spacing: 2px;
+        }
+        
+        .total-balance span {
+            font-size: 1.5rem;
+            color: #fff;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #999;
+            font-size: 0.7rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        
+        .footer a {
+            color: #000;
+            text-decoration: none;
+            border-bottom: 2px solid #ff3333;
+        }
+        
+        .footer a:hover {
+            color: #ff3333;
+        }
+        
+        /* Grid lines decoration */
+        .grid-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: -1;
+            background-image: 
+                linear-gradient(rgba(0,0,0,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,0,0,0.03) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="grid-bg"></div>
+    
+    <div class="container">
+        <div class="logo">
+            <span class="logo-9">9MM</span>
+        </div>
+        <h1>Balance Checker</h1>
+        <p class="subtitle">Multi-chain token lookup</p>
+        
+        <div class="input-card">
+            <div class="input-group">
+                <input 
+                    type="text" 
+                    id="addressInput" 
+                    placeholder="0x..."
+                    autocomplete="off"
+                    spellcheck="false"
+                >
+                <button id="checkBtn" onclick="checkBalance()">Check</button>
+            </div>
+        </div>
+        
+        <div id="loading" class="loading" style="display: none;">
+            <span class="loading-text">LOADING...</span>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="results" class="results"></div>
+    </div>
+    
+    <div class="footer">
+        Powered by <a href="https://index-api.9mm.pro" target="_blank">9MM Indexer API</a>
+    </div>
+
+    <script>
+        const API_BASE = 'https://index-api.9mm.pro';
+        
+        const CHAINS = [
+            { id: 1, name: 'Ethereum' },
+            { id: 8453, name: 'Base' },
+            { id: 146, name: 'Sonic' },
+            { id: 369, name: 'PulseChain' }
+        ];
+        
+        document.getElementById('addressInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') checkBalance();
+        });
+        
+        async function checkBalance() {
+            const address = document.getElementById('addressInput').value.trim();
+            const loading = document.getElementById('loading');
+            const error = document.getElementById('error');
+            const results = document.getElementById('results');
+            const btn = document.getElementById('checkBtn');
+            
+            if (!address || !address.match(/^0x[a-fA-F0-9]{40}$/)) {
+                error.textContent = 'INVALID ADDRESS FORMAT';
+                error.style.display = 'block';
+                results.classList.remove('show');
+                return;
+            }
+            
+            error.style.display = 'none';
+            results.classList.remove('show');
+            loading.style.display = 'block';
+            btn.disabled = true;
+            
+            try {
+                const balances = await Promise.all(
+                    CHAINS.map(chain => fetchBalance(chain, address))
+                );
+                displayResults(balances, address);
+            } catch (err) {
+                error.textContent = 'FETCH FAILED — TRY AGAIN';
+                error.style.display = 'block';
+            } finally {
+                loading.style.display = 'none';
+                btn.disabled = false;
+            }
+        }
+        
+        async function fetchBalance(chain, address) {
+            try {
+                const response = await fetch(
+                    `${API_BASE}/holders?chain_id=${chain.id}&include_contracts=true`
+                );
+                const data = await response.json();
+                const holder = data.holders.find(
+                    h => h.address.toLowerCase() === address.toLowerCase()
+                );
+                return {
+                    chain: chain,
+                    balance: holder ? holder.balance : '0',
+                    found: !!holder
+                };
+            } catch (err) {
+                return { chain: chain, balance: '0', found: false, error: true };
+            }
+        }
+        
+        function formatBalance(weiBalance) {
+            const balance = BigInt(weiBalance);
+            const decimals = BigInt(10 ** 18);
+            const whole = balance / decimals;
+            const fraction = balance % decimals;
+            const wholeStr = whole.toLocaleString();
+            const fractionStr = fraction.toString().padStart(18, '0').slice(0, 2);
+            if (whole === 0n && fraction === 0n) return '0';
+            return `${wholeStr}.${fractionStr}`;
+        }
+        
+        function displayResults(balances, address) {
+            const results = document.getElementById('results');
+            let totalBalance = 0n;
+            let html = '';
+            
+            balances.forEach(({ chain, balance, error }) => {
+                const formattedBalance = formatBalance(balance);
+                const isZero = balance === '0';
+                const hasBalance = !isZero;
+                totalBalance += BigInt(balance);
+                
+                html += `
+                    <div class="chain-card ${hasBalance ? 'has-balance' : ''}">
+                        <div class="chain-header">
+                            <span class="chain-name">${chain.name}</span>
+                            <span class="chain-id">ID: ${chain.id}</span>
+                        </div>
+                        <div class="balance ${isZero ? 'zero' : ''}">${formattedBalance}</div>
+                        <div class="balance-label">9MM TOKENS</div>
+                    </div>
+                `;
+            });
+            
+            html += `
+                <div class="total-section">
+                    <div class="total-label">Total Across All Chains</div>
+                    <div class="total-balance">${formatBalance(totalBalance.toString())} <span>9MM</span></div>
+                </div>
+            `;
+            
+            results.innerHTML = html;
+            results.classList.add('show');
+        }
+    </script>
+</body>
+</html>
