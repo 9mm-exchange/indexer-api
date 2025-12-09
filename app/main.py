@@ -260,27 +260,27 @@ async def get_holders(
     min_balance: Optional[float] = Query(None, description="Minimum token balance filter (in tokens, not wei). Example: 1 = holders with ≥1 token")
 ):
     """
-    Get all token holders with their balances for a specific chain.
+    Get all EOA token holders with their balances for a specific chain.
     
     Response is cached for 30 seconds and gzip compressed.
     
     Query Parameters:
         - chain_id: Chain ID to query (required)
         - include_contracts: If true, include contract addresses (default: false, EOA only)
-        - min_balance: Minimum token balance in tokens (default: 0). Example: min_balance=1 returns holders with ≥1 9MM
+        - min_balance: Minimum token balance in tokens (default: 0). Example: min_balance=1 returns holders with ≥1 token
     
     Excludes (by default):
-    - Zero address
+    - Zero/burn address (0x0000...0000)
     - Contract addresses (unless include_contracts=true)
     
     Returns:
         - chain_id: The chain ID
         - chain_name: The chain name
         - token_address: The indexed token contract address
-        - holder_count: Total number of addresses with positive balance
+        - holder_count: Total number of EOA addresses with positive balance
         - last_indexed_block: The last block that was indexed
         - sync_in_progress: Whether the indexer is currently syncing
-        - holders: List of all holders with their balances (in wei as string)
+        - holders: List of all EOA holders with their balances (in tokens, not wei)
     """
     # Check cache first (different cache keys for different filters)
     cache_key = f"holders_response_{chain_id}_{'all' if include_contracts else 'eoa'}_{min_balance or 0}"
@@ -301,9 +301,9 @@ async def get_holders(
         # Convert min_balance from tokens to wei (18 decimals)
         min_balance_wei = int((min_balance or 0) * (10 ** 18))
         
-        # Filter holders by minimum balance
+        # Filter holders by minimum balance and convert wei to tokens
         holders = [
-            Holder(address=addr, balance=balance)
+            Holder(address=addr, balance=int(balance) / (10 ** 18))
             for addr, balance in holders_data
             if int(balance) >= min_balance_wei
         ]

@@ -7,7 +7,7 @@ from typing import List, Optional
 class Holder(BaseModel):
     """Token holder with balance."""
     address: str
-    balance: str  # Wei as string to preserve precision
+    balance: float  # Balance in tokens (not wei)
 
 
 class HoldersResponse(BaseModel):
