@@ -457,6 +457,26 @@ class Database:
             )
             row = await cursor.fetchone()
             return row["count"] if row else 0
+    
+    async def get_contract_addresses(self, chain_id: int) -> List[str]:
+        """Get addresses that were marked as contracts (for smart wallet recheck)."""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT address FROM address_types WHERE chain_id = ? AND is_eoa = 0",
+                (chain_id,)
+            )
+            rows = await cursor.fetchall()
+            return [row["address"] for row in rows]
+    
+    async def get_contract_count(self, chain_id: int) -> int:
+        """Get count of addresses marked as contracts for a chain."""
+        async with self.get_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT COUNT(*) as count FROM address_types WHERE chain_id = ? AND is_eoa = 0",
+                (chain_id,)
+            )
+            row = await cursor.fetchone()
+            return row["count"] if row else 0
 
 
 # Global database instance

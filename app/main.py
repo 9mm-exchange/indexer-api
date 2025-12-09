@@ -455,6 +455,48 @@ async def prometheus_metrics():
     )
 
 
+@app.post("/admin/recheck-smart-wallets")
+async def recheck_smart_wallets(
+    chain_id: int = Query(..., description="Chain ID to recheck")
+):
+    """
+    Recheck contract addresses for smart wallet patterns.
+    
+    This endpoint rechecks addresses previously marked as contracts to detect
+    smart wallets (ERC-4337, Safe, etc.) that should be treated as user wallets.
+    
+    Use this after:
+    - Adding new smart wallet patterns to the whitelist
+    - Suspecting some user wallets were incorrectly classified as contracts
+    
+    Note: This can take a while for chains with many contract addresses.
+    """
+    try:
+        indexer = multi_indexer.get_indexer(chain_id)
+        if not indexer:
+            raise HTTPException(status_code=404, detail=f"Chain {chain_id} not found")
+        
+        # Get contract count before recheck
+        contract_count = await db.get_contract_count(chain_id)
+        
+        # Run the recheck
+        result = await indexer.recheck_smart_wallets()
+        
+        return {
+            "chain_id": chain_id,
+            "message": "Smart wallet recheck complete",
+            "contracts_before": contract_count,
+            "addresses_rechecked": result['rechecked'],
+            "smart_wallets_found": result['smart_wallets_found'],
+            "contracts_after": contract_count - result['smart_wallets_found']
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rechecking smart wallets: {e}")
+        raise HTTPException(status_code=500, detail="Failed to recheck smart wallets")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

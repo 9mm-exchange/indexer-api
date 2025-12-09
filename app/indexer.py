@@ -17,6 +17,37 @@ logger = logging.getLogger(__name__)
 # ERC20 Transfer event signature
 TRANSFER_EVENT_SIGNATURE = Web3.keccak(text="Transfer(address,address,uint256)").hex()
 
+# Smart wallet bytecode patterns to whitelist (treat as EOA/user wallets)
+# These are contract wallets controlled by users, not DeFi/token contracts
+SMART_WALLET_PATTERNS = [
+    "0xef01",      # ERC-4337 Account Abstraction (Coinbase Smart Wallet, etc.)
+    "0xef0100",    # ERC-4337 with version byte
+    "0x363d3d373d3d3d363d73",  # EIP-1167 Minimal Proxy (used by Safe, etc.)
+]
+
+def is_smart_wallet(code: str) -> bool:
+    """
+    Check if bytecode matches known smart wallet patterns.
+    
+    Smart wallets are contract wallets controlled by users (not DeFi protocols).
+    Examples: Coinbase Smart Wallet, Safe (Gnosis Safe), Argent, etc.
+    
+    Args:
+        code: Bytecode hex string (with 0x prefix)
+        
+    Returns:
+        True if code matches a smart wallet pattern
+    """
+    if not code or code == "0x":
+        return False
+    
+    code_lower = code.lower()
+    for pattern in SMART_WALLET_PATTERNS:
+        if code_lower.startswith(pattern.lower()):
+            return True
+    
+    return False
+
 # Standard ERC20 ABI for Transfer event
 ERC20_TRANSFER_ABI = [
     {
@@ -112,16 +143,26 @@ class ChainIndexer:
             
             # Parse results
             eoa_map = {}
+            smart_wallet_count = 0
             for i, addr in enumerate(addresses):
                 # Find matching result by id
                 result = next((r for r in results if r.get("id") == i), None)
                 if result and "result" in result:
                     code = result["result"]
-                    is_eoa = code == "0x" or code == "" or code is None
-                    eoa_map[addr] = is_eoa
+                    # Check if EOA (no code) or smart wallet (whitelisted pattern)
+                    if code == "0x" or code == "" or code is None:
+                        eoa_map[addr] = True
+                    elif is_smart_wallet(code):
+                        eoa_map[addr] = True
+                        smart_wallet_count += 1
+                    else:
+                        eoa_map[addr] = False
                 else:
                     # Assume contract if we can't determine
                     eoa_map[addr] = False
+            
+            if smart_wallet_count > 0:
+                logger.debug(f"[Chain {self.chain_id}] Found {smart_wallet_count} smart wallets in batch")
             
             return eoa_map
             
@@ -136,7 +177,14 @@ class ChainIndexer:
         for addr in addresses:
             try:
                 code = self.w3.eth.get_code(Web3.to_checksum_address(addr))
-                results[addr] = code == b'' or code.hex() == '0x'
+                code_hex = code.hex() if isinstance(code, bytes) else code
+                # Check if EOA (no code) or smart wallet (whitelisted pattern)
+                if code == b'' or code_hex == '0x' or code_hex == '':
+                    results[addr] = True
+                elif is_smart_wallet('0x' + code_hex if not code_hex.startswith('0x') else code_hex):
+                    results[addr] = True
+                else:
+                    results[addr] = False
             except Exception:
                 results[addr] = False
             await asyncio.sleep(0.02)
@@ -178,6 +226,48 @@ class ChainIndexer:
             await asyncio.sleep(0.1)
         
         logger.info(f"[Chain {self.chain_id}] Finished checking address types. EOAs found: {eoa_total}/{checked_count}")
+    
+    async def recheck_smart_wallets(self) -> Dict[str, int]:
+        """
+        Recheck addresses previously marked as contracts to detect smart wallets.
+        
+        This is useful after updating smart wallet patterns to reclassify
+        addresses that were incorrectly marked as contracts.
+        
+        Returns:
+            Dict with counts: {'rechecked': N, 'smart_wallets_found': M}
+        """
+        contracts = await db.get_contract_addresses(self.chain_id)
+        
+        if not contracts:
+            logger.info(f"[Chain {self.chain_id}] No contract addresses to recheck")
+            return {'rechecked': 0, 'smart_wallets_found': 0}
+        
+        logger.info(f"[Chain {self.chain_id}] Rechecking {len(contracts)} contract addresses for smart wallets...")
+        
+        batch_size = 100
+        rechecked = 0
+        smart_wallets_found = 0
+        
+        for i in range(0, len(contracts), batch_size):
+            batch = contracts[i:i + batch_size]
+            
+            # Batch check - this now includes smart wallet detection
+            eoa_results = await self.batch_check_eoa(batch)
+            
+            # Only update addresses that are now identified as EOA/smart wallets
+            updates = [(addr, True) for addr, is_eoa in eoa_results.items() if is_eoa]
+            if updates:
+                await db.batch_set_address_types(self.chain_id, updates)
+                smart_wallets_found += len(updates)
+            
+            rechecked += len(batch)
+            logger.info(f"[Chain {self.chain_id}] Rechecked {rechecked}/{len(contracts)}. Smart wallets found so far: {smart_wallets_found}")
+            
+            await asyncio.sleep(0.1)
+        
+        logger.info(f"[Chain {self.chain_id}] Recheck complete. Found {smart_wallets_found} smart wallets out of {rechecked} contracts")
+        return {'rechecked': rechecked, 'smart_wallets_found': smart_wallets_found}
     
     async def fetch_transfer_events(
         self, 
