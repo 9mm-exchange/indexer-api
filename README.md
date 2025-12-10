@@ -296,7 +296,35 @@ Prometheus metrics endpoint for monitoring.
 - `indexer_blocks_behind{chain_id}` - Blocks behind chain head per chain
 - `indexer_sync_in_progress{chain_id}` - Sync status per chain (1=syncing, 0=idle)
 
+## Frontend (Balance Checker)
+
+A static HTML/JS frontend is available in `balance-checker.html` to query the API and display user balances.
+
+### Local Usage
+Simply open `balance-checker.html` in your browser. Configure the API endpoint in the `API_BASE` constant if running locally.
+
+### Deployment
+The frontend is designed to be served via Nginx in Kubernetes. See `k8s-frontend/` for manifests.
+
+## Deployment Helper Script
+
+A `deploy.sh` script is provided to simplify Kubernetes operations.
+
+```bash
+chmod +x deploy.sh
+
+# Deploy Backend API
+./deploy.sh deploy-backend
+
+# Deploy Frontend
+./deploy.sh deploy-frontend
+
+# Check Status
+./deploy.sh status
+```
+
 ## Kubernetes Deployment
+
 
 ### Prerequisites
 

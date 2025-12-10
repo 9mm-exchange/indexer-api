@@ -14,7 +14,7 @@ on:
 env:
   DOCKER_IMAGE: spiritmonkey/indexer-api
   K8S_DEPLOYMENT: token-indexer
-  K8S_NAMESPACE: default
+  K8S_NAMESPACE: holders
 
 jobs:
   build-and-push:
@@ -95,27 +95,49 @@ jobs:
 
       - name: Deploy to Kubernetes
         run: |
-          # Update the deployment image
+          # Create namespace if not exists
+          kubectl create namespace ${{ env.K8S_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Deploy Backend
+          kubectl apply -f k8s/ -n ${{ env.K8S_NAMESPACE }}
+          
+          # Update backend image
           kubectl set image deployment/${{ env.K8S_DEPLOYMENT }} \
             indexer=${{ env.DOCKER_IMAGE }}:${{ needs.build-and-push.outputs.image_tag }} \
             -n ${{ env.K8S_NAMESPACE }}
           
-          # Wait for rollout to complete
-          kubectl rollout status deployment/${{ env.K8S_DEPLOYMENT }} \
+          # Deploy Frontend
+          # Create ConfigMap from fresh HTML file
+          kubectl create configmap balance-checker-html \
+            --from-file=index.html=balance-checker.html \
             -n ${{ env.K8S_NAMESPACE }} \
-            --timeout=300s
+            --dry-run=client -o yaml | kubectl apply -f -
+            
+          # Apply frontend manifests
+          kubectl apply -f k8s-frontend/ -n ${{ env.K8S_NAMESPACE }}
+          
+          # Wait for rollouts
+          kubectl rollout status deployment/${{ env.K8S_DEPLOYMENT }} -n ${{ env.K8S_NAMESPACE }} --timeout=300s
+          kubectl rollout status deployment/balance-checker -n ${{ env.K8S_NAMESPACE }} --timeout=120s
 
       - name: Verify deployment
         run: |
           echo "### Deployment Status" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Backend" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           kubectl get deployment ${{ env.K8S_DEPLOYMENT }} -n ${{ env.K8S_NAMESPACE }} >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Pod Status:**" >> $GITHUB_STEP_SUMMARY
+          
+          echo "#### Frontend" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          kubectl get pods -l app=${{ env.K8S_DEPLOYMENT }} -n ${{ env.K8S_NAMESPACE }} >> $GITHUB_STEP_SUMMARY
+          kubectl get deployment balance-checker -n ${{ env.K8S_NAMESPACE }} >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          
+          echo "#### Services" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          kubectl get svc -n ${{ env.K8S_NAMESPACE }} >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Summary
@@ -124,5 +146,4 @@ jobs:
           echo "### Deployment Complete 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Image:** \`${{ env.DOCKER_IMAGE }}:${{ needs.build-and-push.outputs.image_tag }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Deployment:** \`${{ env.K8S_DEPLOYMENT }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Namespace:** \`${{ env.K8S_NAMESPACE }}\`" >> $GITHUB_STEP_SUMMARY

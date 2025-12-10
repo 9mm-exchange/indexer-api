@@ -2,7 +2,6 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: balance-checker
-  namespace: ninemm-frontend
 spec:
   replicas: 1
   selector:
